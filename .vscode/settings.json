@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "device.h": "c",
+        "uart.h": "c",
+        "log.h": "c"
+    }
+}

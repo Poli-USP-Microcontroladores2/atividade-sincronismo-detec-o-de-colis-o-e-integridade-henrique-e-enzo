@@ -1,0 +1,10 @@
+/ {
+    aliases {
+        uart-comm = &uart1;
+    };
+};
+
+&uart1 {
+    status = "okay";
+    current-speed = <9600>;
+};
