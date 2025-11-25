@@ -3,21 +3,22 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/logging/log.h>
+#include <string.h>
 
-LOG_MODULE_REGISTER(sync_merged, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(integrity_app, LOG_LEVEL_INF);
 
-/* --- Configurações --- */
 #define MODE_PERIOD_SECONDS 5
-#define SYNC_BYTE 0xA5U
 #define DEBOUNCE_MS 50
+#define PKT_HEADER  0x7E
+#define MAX_PAYLOAD 32
 
-/* UART1 (Definida no seu overlay) */
+/* UART1 (PTE0/PTE1) */
 #define UART_NODE DT_NODELABEL(uart1)
 
 /* Aliases */
-#define LED_TX_NODE   DT_ALIAS(led0) // Verde
-#define LED_RX_NODE   DT_ALIAS(led1) // Vermelho
-#define LED_SYNC_NODE DT_ALIAS(led2) // Azul
+#define LED_TX_NODE   DT_ALIAS(led0) 
+#define LED_RX_NODE   DT_ALIAS(led1) 
+#define LED_SYNC_NODE DT_ALIAS(led2) 
 #define BUTTON_NODE   DT_ALIAS(sw0)
 
 static const struct gpio_dt_spec led_tx   = GPIO_DT_SPEC_GET(LED_TX_NODE, gpios);
@@ -35,7 +36,6 @@ static struct k_timer mode_timer;
 static struct k_work_delayable button_work;
 static struct gpio_callback button_cb;
 
-/* --- Helpers --- */
 void set_leds(radio_mode_t mode) {
     if (mode == MODE_TX) {
         gpio_pin_set_dt(&led_tx, 1);
@@ -46,92 +46,132 @@ void set_leds(radio_mode_t mode) {
     }
 }
 
-/* --- Timer Handler --- */
 static void mode_timer_handler(struct k_timer *timer) {
-    gpio_pin_set_dt(&led_sync, 0); // Apaga LED Azul
-    
-    // Alterna o modo
+    gpio_pin_set_dt(&led_sync, 0);
     current_mode = (current_mode == MODE_RX) ? MODE_TX : MODE_RX;
     set_leds(current_mode);
-    
-    LOG_INF("TIMER: Modo alterado para %s", current_mode == MODE_TX ? "TX" : "RX");
+    LOG_INF("TIMER: Alternando para %s", current_mode == MODE_TX ? "TX" : "RX");
 }
 
-/* * --- THREAD DE LEITURA (SUBSTITUI A INTERRUPÇÃO) --- 
- * Esta thread roda em paralelo e usa o método de polling que funcionou no teste.
- */
+/* --- TX CORRIGIDO (Usa Sleep para ceder CPU ao RX) --- */
+void send_packet(const char *msg) {
+    uint8_t len = strlen(msg);
+    if (len > MAX_PAYLOAD) len = MAX_PAYLOAD;
+
+    uint8_t checksum = 0;
+    for(int i=0; i<len; i++) checksum += msg[i];
+
+    /* MUDANÇA: k_sleep libera a CPU para a thread RX rodar! */
+    
+    uart_poll_out(uart_comm, PKT_HEADER);
+    k_sleep(K_MSEC(1)); // Libera CPU por 1ms
+    
+    uart_poll_out(uart_comm, len);
+    k_sleep(K_MSEC(1));
+
+    for(int i=0; i<len; i++) {
+        uart_poll_out(uart_comm, msg[i]);
+        k_sleep(K_MSEC(1));
+    }
+    
+    uart_poll_out(uart_comm, checksum);
+    
+    LOG_INF("TX: Enviado '%s' (Len: %d, Chk: %d)", msg, len, checksum);
+}
+
+/* --- RX THREAD --- */
 void rx_thread_fn(void) {
     uint8_t c;
+    enum { WAIT_HEADER, WAIT_LEN, WAIT_PAYLOAD, WAIT_CHECK } state = WAIT_HEADER;
+    
+    uint8_t rx_len = 0;
+    uint8_t rx_idx = 0;
+    uint8_t rx_buf[MAX_PAYLOAD + 1]; 
+    uint8_t rx_calc_checksum = 0;
+
+    LOG_INF("RX THREAD: Monitorando...");
 
     while (1) {
-        // Tenta ler um byte (não bloqueante ou timeout curto)
-        // Se retornar 0, é porque chegou dado
-        if (uart_poll_in(uart_comm, &c) == 0) {
+        // Tenta ler enquanto houver dados
+        while (uart_poll_in(uart_comm, &c) == 0) {
             
-            // LOG PARA PROVAR QUE O HARDWARE FUNCIONA
-            LOG_INF("RX DETECTADO: 0x%02X", c);
+            // Regra de Resync: Header reinicia tudo
+            if (c == PKT_HEADER) {
+                state = WAIT_LEN;
+                rx_calc_checksum = 0;
+                continue; 
+            }
 
-            if (c == SYNC_BYTE) {
-                LOG_INF(">>> SYNC VALIDADO! Sincronizando... <<<");
-                
-                // 1. Feedback Visual
-                gpio_pin_set_dt(&led_sync, 1);
-                
-                // 2. Lógica de Sincronismo (Vira Escravo)
-                current_mode = MODE_RX;
-                set_leds(MODE_RX);
+            switch (state) {
+                case WAIT_LEN:
+                    rx_len = c;
+                    if (rx_len > MAX_PAYLOAD) {
+                        state = WAIT_HEADER; // Tamanho inválido, descarta
+                    } else {
+                        rx_idx = 0;
+                        state = WAIT_PAYLOAD;
+                    }
+                    break;
 
-                // 3. Reseta Timer
-                k_timer_start(&mode_timer, K_SECONDS(MODE_PERIOD_SECONDS), K_SECONDS(MODE_PERIOD_SECONDS));
-                
-                // Pequeno delay para o LED azul ser visto
-                k_msleep(100);
-                gpio_pin_set_dt(&led_sync, 0);
+                case WAIT_PAYLOAD:
+                    rx_buf[rx_idx] = c;
+                    rx_calc_checksum += c;
+                    rx_idx++;
+                    if (rx_idx >= rx_len) state = WAIT_CHECK;
+                    break;
+
+                case WAIT_CHECK: {
+                    uint8_t received_checksum = c;
+                    if (rx_calc_checksum == received_checksum) {
+                        // SUCESSO
+                        rx_buf[rx_len] = '\0';
+                        LOG_INF("RX: Integridade OK! Msg: '%s'", rx_buf);
+                        
+                        if (strcmp(rx_buf, "SYNC_CMD") == 0) {
+                            LOG_INF(">>> COMANDO EXECUTADO <<<");
+                            gpio_pin_set_dt(&led_sync, 1);
+                            
+                            current_mode = MODE_RX;
+                            set_leds(MODE_RX);
+                            k_timer_start(&mode_timer, K_SECONDS(MODE_PERIOD_SECONDS), K_SECONDS(MODE_PERIOD_SECONDS));
+                            
+                            k_msleep(200);
+                            gpio_pin_set_dt(&led_sync, 0);
+                        }
+                    } else {
+                        LOG_WRN("RX: Checksum Ruim (Calc %d != Recv %d)", rx_calc_checksum, received_checksum);
+                        gpio_pin_toggle_dt(&led_rx);
+                    }
+                    state = WAIT_HEADER;
+                    break;
+                }
             }
         }
-        
-        // Cede processamento para não travar o sistema (Sleep curto)
-        k_usleep(100); 
+        k_usleep(50); 
     }
 }
 
-/* Define a Thread RX (Pilha de 1024 bytes, Prioridade 5) */
 K_THREAD_DEFINE(rx_tid, 1024, rx_thread_fn, NULL, NULL, NULL, 5, 0, 0);
 
-
-/* --- Botão (TX) --- */
 static void button_work_handler(struct k_work *work) {
     if (gpio_pin_get_dt(&button) <= 0) return;
+    
+    // Manda pacote
+    send_packet("SYNC_CMD");
 
-    LOG_INF("BTN: Enviando Sync...");
-    gpio_pin_set_dt(&led_sync, 1);
-
-    // Envia byte
-    uart_poll_out(uart_comm, SYNC_BYTE);
-
-    // Vira Mestre (TX)
+    // Lógica do botão local
     current_mode = MODE_TX;
     set_leds(MODE_TX);
-
-    // Reseta Timer
     k_timer_start(&mode_timer, K_SECONDS(MODE_PERIOD_SECONDS), K_SECONDS(MODE_PERIOD_SECONDS));
-    
-    k_msleep(100); 
-    gpio_pin_set_dt(&led_sync, 0);
 }
 
 static void button_pressed_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
     k_work_reschedule(&button_work, K_MSEC(DEBOUNCE_MS));
 }
 
-/* --- Main --- */
 int main(void) {
-    
-    if (!device_is_ready(uart_comm)) {
-        LOG_ERR("UART1 FALHOU");
-        return 0;
-    }
-    
+    if (!device_is_ready(uart_comm)) return 0;
+
     gpio_pin_configure_dt(&led_tx, GPIO_OUTPUT_INACTIVE);
     gpio_pin_configure_dt(&led_rx, GPIO_OUTPUT_INACTIVE);
     gpio_pin_configure_dt(&led_sync, GPIO_OUTPUT_INACTIVE);
@@ -142,10 +182,9 @@ int main(void) {
     gpio_add_callback(button.port, &button_cb);
     k_work_init_delayable(&button_work, button_work_handler);
 
-    // Configura Timer
     k_timer_init(&mode_timer, mode_timer_handler, NULL);
     k_timer_start(&mode_timer, K_SECONDS(MODE_PERIOD_SECONDS), K_SECONDS(MODE_PERIOD_SECONDS));
-    
+
     set_leds(MODE_RX); 
     return 0;
 }

@@ -32,27 +32,90 @@ Botão
 
 ### 1.2. Detecção de Colisão
 
-Reflita inicialmente se vocês consideram o sincronismo feito por botão algo perfeito, ou se ele pode falhar.
-_Será que é necessário fazer um sincronismo periódico?_
+Teste Colisão:
 
-Nos casos em que há problemas de sincronismo, podemos ter o cenário de colisão: quando as duas placas tentam transmitir ao mesmo tempo.
-Para lidar com este problema, a proposta é elaborar uma detecção de colisão: logo antes de transmitir a mensagem completa, ou após transmitir cada caractere, podemos ouvir o canal (modo de recepção) para verificar se não há alguém já transmitindo, e não iniciar a transmissão caso o canal de comunicação esteja ocupado.
+Modo
+- Ambas as placas iniciam no modo RX
 
-_Elabore um diagrama de transição de estados (versão 2) para modelar como as duas placas irão interagir com o sincronismo por botão e a detecção de colisão, considerando os diversos estados possíveis e os eventos que determinam as transições de estados (vocês podem utilizar o D2 diagrams visto em atividade anterior: https://play.d2lang.com/)_.
 
-_Descreva um teste para verificação de correto funcionamento do sistema considerando este requisito de detecção de colisão, contemplando pré-condição, etapas do teste e pós-condição, de forma similar ao realizado em atividades anteriores (Dica: é possível mapear os estados mais relevantes a comportamentos do led da placa para observar o seu funcionamento?)_.
+CT-Colisão – Detecção de Canal Ocupado
+
+Entrada:
+
+Placa B começa a transmitir (Segurar botão na B).
+
+Enquanto B transmite, pressionar Botão na Placa A.
+
+Saída Esperada:
+
+A Placa A verifica que o RX está recebendo bits.
+
+A Placa A NÃO acende o LED de TX.
+
+A Placa A mantém o LED de RX (ou pisca um LED de Erro rápido).
+
+Critério de Aceitação:
+
+A transmissão da Placa B não é corrompida.
+
+A Placa A respeita o tráfego existente e não "atropela" a comunicação.
+
+
+CT2 – Disparo de Sincronismo (Master Trigger)
+Este teste verifica se o botão força a placa local a transmitir e se a placa remota obedece ao comando de troca de modo.
+
+Entrada:
+
+Pressionar o botão na Placa A.
+
+Saída Esperada:
+
+Placa A: O LED altera imediatamente para o estado TX e inicia a contagem do tempo de transmissão.
+
+Placa B: Ao receber o "pulso" (mensagem de sync) da Placa A, o LED da Placa B deve confirmar a entrada no modo RX (ou piscar brevemente para indicar que o contador interno foi reiniciado/sincronizado).
+
+Critério de Aceitação:
+
+Ocorre a mudança visual de estado na Placa A (Transmissor) e, com atraso imperceptível, a reação visual na Placa B (Receptor), confirmando o sincronismo.
+
+
+CT1 – Inicialização em Modo RX (Silêncio)
+Este teste garante que o sistema começa em um estado seguro e conhecido por um breve período.
+
+Entrada:
+
+Ligar a alimentação de ambas as placas (Placa A e Placa B).
+
+Não pressionar nenhum botão.
+
+Saída Esperada:
+
+Os LEDs de ambas as placas devem indicar o estado RX (Ex: LEDs apagados ou acesos em uma cor específica de "escuta").
+
+Critério de Aceitação:
+
+As placas permanecem estáticas em modo de recepção até o fim do tempo estabelecido.
 
 ### 1.3. Verificação de Integridade
 
-Reflita inicialmente o que ocorre com as mensagens transmitidas e recebidas em caso de colisão.
+CT3 – Verificação de Integridade (Rejeição de Mensagem Corrompida)
+Entrada:
 
-Nos casos em que há problemas de colisão, as mensagens podem não ser recebidas de forma completa.
-Para lidar com este problema, a proposta é elaborar uma verificação de integridade: no início da mensagem, podemos enviar um hash da mensagem ou pelo menos o tamanho total da mansagem em caracteres, para que o receptor possa verificar se recebeu todos os caracteres de forma íntegra.
-Questão para reflexão: _a verificação de integridade de conteúdo é suportada pela verificação de tamanho da mensagem recebida em caracteres?_
+Configurar a Placa A para enviar um pacote "malformado" intencional para a Placa B.
 
-_Elabore um diagrama de transição de estados (versão 3) para modelar como as duas placas irão interagir com o sincronismo por botão, a detecção de colisão e a verificação de integridade, considerando os diversos estados possíveis e os eventos que determinam as transições de estados (vocês podem utilizar o D2 diagrams visto em atividade anterior: https://play.d2lang.com/)_.
+Ação: A Placa A envia um cabeçalho declarando um tamanho de mensagem de 5 bytes, mas envia efetivamente apenas 3 bytes de dados (ex: string "ABC") e encerra a transmissão.
 
-_Descreva um teste para verificação de correto funcionamento do sistema considerando este requisito de verificação de integridade, contemplando pré-condição, etapas do teste e pós-condição, de forma similar ao realizado em atividades anteriores (Dica: podemos mapear a correta verificação de integridade a comportamentos da placa?)_.
+Saída esperada:
+
+A Placa B recebe os 3 bytes, aguarda brevemente pelos bytes faltantes (timeout) e percebe que a conta não fecha.
+
+A Placa B NÃO deve acionar o LED de "Sucesso" (que acenderia numa mensagem íntegra).
+
+A Placa B deve acionar o indicador visual de ERRO (ex: piscar o LED rapidamente ou acender um LED de cor diferente) e descartar os dados armazenados no buffer.
+
+Critério de Aceitação:
+
+O sistema receptor deve ser capaz de distinguir entre um pacote completo e um incompleto, garantindo que mensagens com divergência de tamanho sejam rejeitadas e não processadas pela aplicação.
 
 ## Etapa 2: Desenvolvimento Orientado a Testes
 
