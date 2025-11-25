@@ -15,12 +15,20 @@ Considerando o cenário proposto de comunicação entre duas placas com modo de 
 
 ### 1.1. Sincronismo por Botão
 
-A proposta é elaborar um sincronismo entre as duas placas por meio de um botão, de forma similar ao realizado na atividade de semáforos de pedestres e veículos. Dica: provavelmente os códigos não serão os mesmos, ou algum ajuste adaptativo deve ser realizado para que uma placa esteja no modo de transmissão após o usuário apertar o botão, e a outra placa esteja no modo de recepção.
+<img src="docs/diagramas/Diagrama Botão.png" alt="Diagrama Botão">
 
-_Elabore um diagrama de transição de estados inicial para modelar como as duas placas irão interagir com o sincronismo por botão, considerando os diversos estados possíveis e os eventos que determinam as transições de estados (vocês podem utilizar o D2 diagrams visto em atividade anterior: https://play.d2lang.com/)_.
+#### Caso de Teste
+Teste Botão:
 
-_Descreva um teste para verificação de correto funcionamento do sistema considerando este requisito de sincronismo por meio de botão, contemplando pré-condição, etapas do teste e pós-condição, de forma similar ao realizado em atividades anteriores (Dica: como não terá o canal de comunicação com o computador, podem utilizar o led da placa para indicar a transmissão e recepção de informações)_.
-A ideia é descrever o teste primeiro antes da implementação, de acordo com o TDD visto na atividade passada.
+Leds
+- Leds indicam o estado do protocolo
+
+Modos
+- Uma placa emite um pulso quando a outra receber o pulso alterna o modo.
+
+Botão
+- Força o estado das placas para um determinado modo e reinicia a contagem do tempo.
+
 
 ### 1.2. Detecção de Colisão
 
