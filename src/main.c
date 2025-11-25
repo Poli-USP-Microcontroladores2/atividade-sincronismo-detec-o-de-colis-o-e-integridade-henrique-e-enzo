@@ -16,6 +16,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/sys/atomic.h> /* adicionado para atomic_t */
 #include <string.h>
 #include <zephyr/logging/log.h>
 
@@ -42,6 +43,10 @@ LOG_MODULE_REGISTER(uart_rx, LOG_LEVEL_DBG);
 #define TX_STACK_SIZE 1024
 #define RX_PRIORITY 6
 #define TX_PRIORITY 6
+
+/* ------------ Sincronização mínima (apenas o necessário) ------------ */
+#define SYNC_BYTE 0xA5U
+static atomic_t synced = ATOMIC_INIT(0);
 
 /* Aliases / devicetree */
 #define LED_GREEN_NODE  DT_ALIAS(led0)
@@ -274,6 +279,30 @@ static void rx_thread_fn(void *a, void *b, void *c)
         if (r == 0) {
             uint8_t b = (uint8_t)cbyte;
 
+            /* --- detecção mínima de SYNC_BYTE --- */
+            if (b == SYNC_BYTE && !atomic_get(&synced)) {
+                atomic_set(&synced, 1);
+                LOG_INF("[SYNC] Recebido SYNC_BYTE -> alinhando modo");
+
+                /* Forçar início imediato do ciclo em TX */
+                k_mutex_lock(&mode_lock, K_FOREVER);
+                current_mode = MODE_TX;
+                k_mutex_unlock(&mode_lock);
+
+                /* Atualiza LED / estado para TX e acorda tx_thread */
+                enter_tx_mode();
+                k_sem_give(&tx_sem);
+
+                /* Reinicia timer para alinhar ciclos a partir de agora */
+                k_timer_start(&mode_timer, K_SECONDS(MODE_PERIOD_SECONDS), K_SECONDS(MODE_PERIOD_SECONDS));
+
+                /* ignora byte de sync no framing */
+                state = 0;
+                expected_len = 0;
+                payload_idx = 0;
+                continue;
+            }
+
             switch (state) {
             case 0: /* aguardando header */
                 if (b == PKT_HEADER) {
@@ -363,6 +392,12 @@ static void tx_thread_fn(void *a, void *b, void *c)
             /* se há mensagem na fila, envia; se fila vazia, sai */
             int ret = k_msgq_get(&tx_msgq, &m, K_NO_WAIT);
             if (ret == 0) {
+                /* --- envio de SYNC_BYTE na primeira transmissão (adicionado) --- */
+                if (!atomic_get(&synced)) {
+                    uart_poll_out(uart_comm, SYNC_BYTE);
+                    atomic_set(&synced, 1);
+                }
+
                 send_packet_now(uart_comm, m.data, m.len);
                 /* pequena pausa entre pacotes para evitar congestionamento (ajustável) */
                 k_sleep(K_MSEC(20));
