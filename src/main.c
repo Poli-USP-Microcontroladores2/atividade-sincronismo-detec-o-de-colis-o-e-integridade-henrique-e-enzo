@@ -19,7 +19,7 @@
 #include <string.h>
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(uart_rx, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(uart_rx, LOG_LEVEL_DBG);
 
 /* ------------ Configuração (ajuste se necessário) ------------ */
 
@@ -396,7 +396,7 @@ K_THREAD_DEFINE(tx_thread_id, TX_STACK_SIZE, tx_thread_fn, NULL, NULL, NULL, TX_
 
 /* ------------ main init ------------ */
 
-void main(void)
+int main(void)
 {
     LOG_INF("Iniciando FRDM-KL25Z FSM (UART0) - Zephyr\n");
 
@@ -411,7 +411,7 @@ void main(void)
 
     if (!device_is_ready(uart_comm)) {
         LOG_ERR("Erro: uart_comm (UART0) não disponível\n");
-        return;
+        return 1;
     }
 
     /* configurar LEDs */
