@@ -3,6 +3,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/console/console.h> /* Necessário para console_getline */
 #include <string.h>
 
 LOG_MODULE_REGISTER(integrity_app, LOG_LEVEL_INF);
@@ -12,7 +13,7 @@ LOG_MODULE_REGISTER(integrity_app, LOG_LEVEL_INF);
 #define PKT_HEADER  0x7E
 #define MAX_PAYLOAD 32
 
-/* UART1 (PTE0/PTE1) */
+/* UART1 (PTE0/PTE1) - Comunicação entre placas */
 #define UART_NODE DT_NODELABEL(uart1)
 
 /* Aliases */
@@ -53,7 +54,9 @@ static void mode_timer_handler(struct k_timer *timer) {
     LOG_INF("TIMER: Alternando para %s", current_mode == MODE_TX ? "TX" : "RX");
 }
 
-/* --- TX CORRIGIDO (Usa Sleep para ceder CPU ao RX) --- */
+/* --- TX RESTAURADO --- */
+/* Voltamos a usar k_sleep(1ms) para garantir que a thread RX possa rodar 
+   nos intervalos e não travamos a CPU com busy_wait */
 void send_packet(const char *msg) {
     uint8_t len = strlen(msg);
     if (len > MAX_PAYLOAD) len = MAX_PAYLOAD;
@@ -61,10 +64,8 @@ void send_packet(const char *msg) {
     uint8_t checksum = 0;
     for(int i=0; i<len; i++) checksum += msg[i];
 
-    /* MUDANÇA: k_sleep libera a CPU para a thread RX rodar! */
-    
     uart_poll_out(uart_comm, PKT_HEADER);
-    k_sleep(K_MSEC(1)); // Libera CPU por 1ms
+    k_sleep(K_MSEC(1)); // Delay importante para sincronia e yield
     
     uart_poll_out(uart_comm, len);
     k_sleep(K_MSEC(1));
@@ -76,10 +77,11 @@ void send_packet(const char *msg) {
     
     uart_poll_out(uart_comm, checksum);
     
-    LOG_INF("TX: Enviado '%s' (Len: %d, Chk: %d)", msg, len, checksum);
+    LOG_INF("TX: Enviado '%s'", msg);
 }
 
-/* --- RX THREAD --- */
+/* --- RX RESTAURADO --- */
+/* Voltamos a usar k_usleep(50) para polling rápido. 10ms era lento demais. */
 void rx_thread_fn(void) {
     uint8_t c;
     enum { WAIT_HEADER, WAIT_LEN, WAIT_PAYLOAD, WAIT_CHECK } state = WAIT_HEADER;
@@ -89,13 +91,12 @@ void rx_thread_fn(void) {
     uint8_t rx_buf[MAX_PAYLOAD + 1]; 
     uint8_t rx_calc_checksum = 0;
 
-    LOG_INF("RX THREAD: Monitorando...");
+    LOG_INF("RX THREAD: Monitorando UART1...");
 
     while (1) {
-        // Tenta ler enquanto houver dados
+        // Loop de leitura rápida
         while (uart_poll_in(uart_comm, &c) == 0) {
             
-            // Regra de Resync: Header reinicia tudo
             if (c == PKT_HEADER) {
                 state = WAIT_LEN;
                 rx_calc_checksum = 0;
@@ -105,12 +106,8 @@ void rx_thread_fn(void) {
             switch (state) {
                 case WAIT_LEN:
                     rx_len = c;
-                    if (rx_len > MAX_PAYLOAD) {
-                        state = WAIT_HEADER; // Tamanho inválido, descarta
-                    } else {
-                        rx_idx = 0;
-                        state = WAIT_PAYLOAD;
-                    }
+                    if (rx_len > MAX_PAYLOAD) state = WAIT_HEADER;
+                    else { rx_idx = 0; state = WAIT_PAYLOAD; }
                     break;
 
                 case WAIT_PAYLOAD:
@@ -121,45 +118,42 @@ void rx_thread_fn(void) {
                     break;
 
                 case WAIT_CHECK: {
-                    uint8_t received_checksum = c;
-                    if (rx_calc_checksum == received_checksum) {
-                        // SUCESSO
+                    if (rx_calc_checksum == c) {
                         rx_buf[rx_len] = '\0';
-                        LOG_INF("RX: Integridade OK! Msg: '%s'", rx_buf);
+                        LOG_INF("RX: Recebido '%s'", rx_buf);
                         
+                        // Lógica de Sincronismo
                         if (strcmp(rx_buf, "SYNC_CMD") == 0) {
-                            LOG_INF(">>> COMANDO EXECUTADO <<<");
+                            LOG_INF(">>> COMANDO SYNC RECEBIDO <<<");
                             gpio_pin_set_dt(&led_sync, 1);
                             
                             current_mode = MODE_RX;
                             set_leds(MODE_RX);
                             k_timer_start(&mode_timer, K_SECONDS(MODE_PERIOD_SECONDS), K_SECONDS(MODE_PERIOD_SECONDS));
                             
-                            k_msleep(200);
+                            // k_sleep aqui é seguro pois estamos na thread RX
+                            k_msleep(200); 
                             gpio_pin_set_dt(&led_sync, 0);
                         }
                     } else {
-                        LOG_WRN("RX: Checksum Ruim (Calc %d != Recv %d)", rx_calc_checksum, received_checksum);
-                        gpio_pin_toggle_dt(&led_rx);
+                         // Checksum falhou
+                         gpio_pin_toggle_dt(&led_rx);
                     }
                     state = WAIT_HEADER;
                     break;
                 }
             }
         }
+        // RESTAURADO: 50 micro-segundos. Rápido o suficiente para não perder bytes.
         k_usleep(50); 
     }
 }
 
-K_THREAD_DEFINE(rx_tid, 1024, rx_thread_fn, NULL, NULL, NULL, 5, 0, 0);
-
 static void button_work_handler(struct k_work *work) {
     if (gpio_pin_get_dt(&button) <= 0) return;
     
-    // Manda pacote
     send_packet("SYNC_CMD");
 
-    // Lógica do botão local
     current_mode = MODE_TX;
     set_leds(MODE_TX);
     k_timer_start(&mode_timer, K_SECONDS(MODE_PERIOD_SECONDS), K_SECONDS(MODE_PERIOD_SECONDS));
@@ -169,12 +163,45 @@ static void button_pressed_isr(const struct device *dev, struct gpio_callback *c
     k_work_reschedule(&button_work, K_MSEC(DEBOUNCE_MS));
 }
 
+/* --- CONSOLE THREAD --- */
+/* Mantido o console_getline, pois resolve o problema original de montar a mensagem */
+static void console_thread_fn(void) {
+    LOG_INF("Console Thread iniciada. Digite e pressione Enter.");
+
+    while (1) {
+        char *line = console_getline();
+
+        if (line) {
+            // Remove quebra de linha final se houver
+            int len = strlen(line);
+            if (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
+                line[len-1] = '\0';
+            }
+
+            if (strlen(line) > 0) {
+                LOG_INF("Console enviando: '%s'", line);
+                send_packet(line);
+            }
+        }
+    }
+}
+
+K_THREAD_DEFINE(console_tid, 1024, console_thread_fn, NULL, NULL, NULL, 3, 0, 0);
+K_THREAD_DEFINE(rx_tid, 1024, rx_thread_fn, NULL, NULL, NULL, 5, 0, 0);
+
 int main(void) {
-    if (!device_is_ready(uart_comm)) return 0;
+    if (!device_is_ready(uart_comm)) {
+        LOG_ERR("UART de comunicacao indisponivel");
+        return 0;
+    }
+
+    /* INICIALIZACAO OBRIGATÓRIA PARA O CONSOLE */
+    console_getline_init();
 
     gpio_pin_configure_dt(&led_tx, GPIO_OUTPUT_INACTIVE);
     gpio_pin_configure_dt(&led_rx, GPIO_OUTPUT_INACTIVE);
     gpio_pin_configure_dt(&led_sync, GPIO_OUTPUT_INACTIVE);
+    
     gpio_pin_configure_dt(&button, GPIO_INPUT);
     gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
     
