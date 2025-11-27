@@ -15,107 +15,104 @@ Considerando o cenário proposto de comunicação entre duas placas com modo de 
 
 ### 1.1. Sincronismo por Botão
 
+#### Diagrama
 <img src="docs/diagramas/Diagrama Botão.png" alt="Diagrama Botão">
 
+---
 #### Caso de Teste
-Teste Botão:
 
-Leds
-- Leds indicam o estado do protocolo
+    CT-01: Inicialização e Alternância Automática
 
-Modos
-- Uma placa emite um pulso quando a outra receber o pulso alterna o modo.
+    Objetivo: Verificar se o timer interno está controlando os estados TX/RX.
 
-Botão
-- Força o estado das placas para um determinado modo e reinicia a contagem do tempo.
+    Ação: Ligar as duas placas e não pressionar nada.
+
+    Observação Visual: Observar os LEDs das placas e as mensagens no terminal por 15 segundos.
+
+    Resultado Esperado:
+
+    O terminal imprime --- [MODO TX] --- ou --- [MODO RX] --- a cada 5 segundos.
+
+    Os LEDs alternam entre Verde (TX) e Azul (RX).
+
+    Critério de Aceite: A alternância ocorre periodicamente e de forma contínua.
+
+---
+
+    CT-02: Sincronismo Forçado por Botão (Master Trigger)
+
+    Objetivo: Verificar se o botão reseta o ciclo e alinha as duas placas (Mestre/Escravo).
+
+    Pré-condição: As placas podem estar desalinhadas (ambas em TX ou ambas em RX).
+
+    Ação: Pressionar o botão SW0 na Placa A.
+
+    Resultado Esperado:
+
+    Placa A (Mestre): O terminal exibe [BTN] Botao detectado!, força imediatamente o modo para TX (LED Verde) e envia o pacote SYNC_BTN.
+
+    Placa B (Escravo): O terminal exibe [RX RECEBIDO]: SYNC_BTN seguido de >>> SYNC RECONHECIDO! <<<. O LED muda para RX (Azul) e reinicia seu timer interno.
+
+    Critério de Aceite: Após o botão ser pressionado, a Placa A deve estar transmitindo e a Placa B escutando, garantindo o alinhamento do ciclo TDM.
 
 
 ### 1.2. Detecção de Colisão
 
-Teste Colisão:
+#### Diagrama
+<img src="docs/diagramas/Diagrama Colisão.png" alt="Diagrama Colisão">
 
-Modo
-- Ambas as placas iniciam no modo RX
+---
+#### Caso de Teste
 
+    CT-01: Digitação em Modo de Escuta (Teste de Fila)
 
-CT-Colisão – Detecção de Canal Ocupado
+    Objetivo: Verificar se o sistema impede o envio imediato durante o modo RX e armazena a mensagem para depois.
 
-Entrada:
+    Pré-condição: Aguardar a Placa A entrar em Modo RX (LED Azul / Terminal: [RX ATIVO]).
 
-Placa B começa a transmitir (Segurar botão na B).
+    Ação: Digitar "Teste Fila" e pressionar Enter enquanto ainda estiver no modo RX.
 
-Enquanto B transmite, pressionar Botão na Placa A.
+    Resultado Esperado:
 
-Saída Esperada:
+    A mensagem NÃO deve aparecer no terminal da Placa B imediatamente.
 
-A Placa A verifica que o RX está recebendo bits.
+    O terminal da Placa A deve exibir: [Agendado] 'Teste Fila'.
 
-A Placa A NÃO acende o LED de TX.
+    Ação Secundária: Aguardar a troca automática para Modo TX (LED Verde).
 
-A Placa A mantém o LED de RX (ou pisca um LED de Erro rápido).
+    Resultado Final:
 
-Critério de Aceitação:
+    Assim que entrar em TX, a Placa A exibe: [TX Enviando]: Teste Fila.
 
-A transmissão da Placa B não é corrompida.
+    A Placa B recebe a mensagem imediatamente.
 
-A Placa A respeita o tráfego existente e não "atropela" a comunicação.
-
-
-CT2 – Disparo de Sincronismo (Master Trigger)
-Este teste verifica se o botão força a placa local a transmitir e se a placa remota obedece ao comando de troca de modo.
-
-Entrada:
-
-Pressionar o botão na Placa A.
-
-Saída Esperada:
-
-Placa A: O LED altera imediatamente para o estado TX e inicia a contagem do tempo de transmissão.
-
-Placa B: Ao receber o "pulso" (mensagem de sync) da Placa A, o LED da Placa B deve confirmar a entrada no modo RX (ou piscar brevemente para indicar que o contador interno foi reiniciado/sincronizado).
-
-Critério de Aceitação:
-
-Ocorre a mudança visual de estado na Placa A (Transmissor) e, com atraso imperceptível, a reação visual na Placa B (Receptor), confirmando o sincronismo.
-
-
-CT1 – Inicialização em Modo RX (Silêncio)
-Este teste garante que o sistema começa em um estado seguro e conhecido por um breve período.
-
-Entrada:
-
-Ligar a alimentação de ambas as placas (Placa A e Placa B).
-
-Não pressionar nenhum botão.
-
-Saída Esperada:
-
-Os LEDs de ambas as placas devem indicar o estado RX (Ex: LEDs apagados ou acesos em uma cor específica de "escuta").
-
-Critério de Aceitação:
-
-As placas permanecem estáticas em modo de recepção até o fim do tempo estabelecido.
+    Critério de Aceite: A transmissão física só ocorre quando o LED está Verde (TX), garantindo que o canal estava reservado para aquela placa.
 
 ### 1.3. Verificação de Integridade
 
-CT3 – Verificação de Integridade (Rejeição de Mensagem Corrompida)
-Entrada:
+#### Diagrama
+<img src="docs/diagramas/Diagrama Integração.png" alt="Diagrama Integração">
 
-Configurar a Placa A para enviar um pacote "malformado" intencional para a Placa B.
+---
+#### Caso de Teste
 
-Ação: A Placa A envia um cabeçalho declarando um tamanho de mensagem de 5 bytes, mas envia efetivamente apenas 3 bytes de dados (ex: string "ABC") e encerra a transmissão.
+    CT-01: Transmissão de Pacote Íntegro
 
-Saída esperada:
+    Objetivo: Verificar se o cálculo de Checksum e o empacotamento estão corretos.
 
-A Placa B recebe os 3 bytes, aguarda brevemente pelos bytes faltantes (timeout) e percebe que a conta não fecha.
+    Ação: Na Placa A (durante modo TX), digitar "Ola" e dar Enter.
 
-A Placa B NÃO deve acionar o LED de "Sucesso" (que acenderia numa mensagem íntegra).
+    Processamento Interno (Caixa Branca): O sistema calcula Header (0x7E) + Len (3) + Payload ("Ola") + Checksum.
 
-A Placa B deve acionar o indicador visual de ERRO (ex: piscar o LED rapidamente ou acender um LED de cor diferente) e descartar os dados armazenados no buffer.
+    Resultado Esperado:
 
-Critério de Aceitação:
+    A Placa B recebe os bytes.
 
-O sistema receptor deve ser capaz de distinguir entre um pacote completo e um incompleto, garantindo que mensagens com divergência de tamanho sejam rejeitadas e não processadas pela aplicação.
+    A thread de RX calcula o checksum localmente.
+
+    O terminal da Placa B exibe: [RX RECEBIDO]: Ola.
+
+    Critério de Aceite: A mensagem aparece limpa no receptor, sem caracteres de lixo.
 
 ## Etapa 2: Desenvolvimento Orientado a Testes
 
