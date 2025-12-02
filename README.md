@@ -116,26 +116,19 @@ Considerando o cenário proposto de comunicação entre duas placas com modo de 
 
 ## Etapa 2: Desenvolvimento Orientado a Testes
 
-A partir da modelagem realizada e dos testes planejados, faça o desenvolvimento da solução para contemplar os 3 requisitos e passar nos 3 testes descritos.
-
-O uso de IA Generativa é incentivado: _veja a diferença entre fazer prompts sem fornecer os requisitos e testes planejados, ou usar prompts com os diagramas e testes planejados_.
-
-Além dos testes de cada requisito em cada etapa, faça **testes de regressão** também, para garantir que os requisitos das etapas anteriores estão funcionando (Dica: podemos ter modos de operação diferentes para testar diferentes features e não nos confundirmos com os comportamentos dos leds em cada situação).
-Isto é: se o sincronismo continua funcionando após a integração da detecção de colisão, e se o sincronismo e a detecção continuam funcionando após a adição da verificação de integridade.
-
-_Faça o upload de todos os códigos no repositório_ (pode ser em branches diferentes, ou até organizar em pull requests as diferentes features).
-
-_Vocês devem adicionar todas as evidências de funcionamento (como por exemplo capturas de tela e fotos) dos testes realizados, mostrando todos os testes realizados no README.
-As imagens e outras evidências de funcionamento devem estar descritas no README e devem estar em uma pasta chamada "results" no repositório._
-
 ### 2.1. Sincronismo por Botão
 
-Insira aqui as descrições dos resultados e referencie as fotos e capturas de tela que mostram o funcionamento.
+A imagem a seguir demonstra um exemplo de funcionamento implementado para o sincronismo por meio do botão. Note que antes as duas placas estavam em RX. A seguir, ao pressionar o botão um comando de sincronismo é enviado dando inicio a uma rotina de mudança de status afim de que uma esteja em RX e outra em TX.
+<img src="results/sincronismo_botao.png" alt="LOG de sincronismo por meio do botão">
 
 ### 2.2. Detecção de Colisão
 
-Insira aqui as descrições dos resultados e referencie as fotos e capturas de tela que mostram o funcionamento.
+Afim de evitar qualquer colisão seguiu-se o protocolo mestre-escravo. Sendo assim: só o mestre envia comandos de sincronismo, pelo sincronimso, nunca as duas placas falam ao mesmo tempo, de modo que há zero colisões possíveis.
 
 ### 2.3. Verificação de Integridade
 
-Insira aqui as descrições dos resultados e referencie as fotos e capturas de tela que mostram o funcionamento.
+As imagens a seguir são prints de LOGs provando a integridade do código e seu funcionamento.
+
+<img src="results/fig01.png" alt="LOG de inicio e sincronismo."><br>
+<img src="results/fig02.png" alt="LOG de envio da mensagem."><br>
+<img src="results/fig03.png" alt="LOG de retorno de mensagem.">
